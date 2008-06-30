@@ -1,0 +1,6 @@
+# s3 command configuration file
+# copy this file to ~/.s3rc
+# replace Xs with your own access key id and secret from AWS
+
+aws_access_key_id: XXXXXXXXXXXXXXXXXXXX
+aws_secret_access_key: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX

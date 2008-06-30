@@ -1,0 +1,194 @@
+#!/usr/bin/perl
+
+# s3 command - script for manipulating files on Amazon AWS S3 service
+
+# Copyright (c) 2008, Oliver Crow
+# See License.txt for terms of use
+
+use Net::Amazon::S3;
+use Text::Wrap;
+use strict;
+
+my (%config, $s3, $cmd);
+
+sub usage_quit {
+    my ($message) = @_;
+    print "\n$message\n" unless ($message eq '');
+    print "\nusage: $0 <command> [parameters]\n";
+    print "commands:\n";
+    print "   ls                   - list buckets\n";
+    print "   ls <bucket> [prefix] - list files\n";
+    print "   ll <bucket> [prefix] - list files in long format\n";
+    print "   get <bucket> <file>  - get file from S3\n";
+    print "   put <bucket> <file>  - put file to S3\n";
+    print "   rm <bucket> <file>   - remove a file from S3\n";
+    print "   diff <bucket> <file> "
+        . "- compare local file with stored S3 checksum\n";
+    print "   mkbucket <bucket>    - create a bucket\n";
+    print "   rmbucket <bucket>    - remove an empty bucket\n";
+    print "\n";
+    exit(1);
+}
+
+sub argv_bucket_and_file {
+    # get a bucket name and a file name from the command arguments, or die
+    if (scalar(@ARGV) < 2) {
+        print STDERR "usage: $0 $cmd <bucket> <file>\n";
+    }
+    return (shift @ARGV, shift @ARGV);
+}
+
+sub argv_bucket_name {
+    # get a bucket name from the command arguments, or die
+    if (scalar(@ARGV) == 0) {
+        print STDERR "usage: $0 $cmd <bucket>\n";
+        exit(1);
+    }
+    return shift @ARGV;
+}
+
+sub get_config {
+    my $rcfile = "$ENV{'HOME'}/.s3rc";
+    open RC, $rcfile
+        or die "Couldn't open config file '$rcfile'";
+    while(<RC>) {
+        m/(\S+)\s*:\s*(\S+)/;
+        $config{$1} = $2;
+    }
+    close RC;
+    if (!defined($config{'aws_access_key_id'})) {
+        die "Config file didn't define aws_access_key_id";
+    }
+    if (!defined($config{'aws_secret_access_key'})) {
+        die "Config file didn't define aws_secret_access_key";
+    }
+}
+
+sub open_s3 {
+    $s3 = Net::Amazon::S3->new({
+        aws_access_key_id => $config{'aws_access_key_id'},
+        aws_secret_access_key => $config{'aws_secret_access_key'},
+        retry => 1
+    });
+}
+
+sub s3_error {
+    print "S3 Error: " . $s3->err . "\n";
+    print wrap("", "", $s3->errstr) . "\n";
+    exit(1);
+}
+
+sub error {
+    my ($msg) = @_;
+    print STDERR $msg . "\n";
+    exit(1);
+}
+
+sub list_files { 
+    if (scalar(@ARGV) > 0) {
+        my $bucket_name = $ARGV[0];
+        my %params;
+
+        my $response = $s3->list_bucket_all({
+            'bucket' => $bucket_name,
+            'prefix' => $ARGV[1]
+        }) or s3_error();
+
+        exists $response->{bucket}
+            or error("No such bucket '$bucket_name'");
+
+        foreach my $key (@{$response->{keys}}) {
+            if ($cmd eq 'll') {
+                my $date = $key->{last_modified};
+                $date =~ s/T/ /; $date =~ s/\.\d\d\dZ//;
+                printf("%10d  %s  %s\n", 
+                    $key->{size}, $date, $key->{key});
+
+                foreach my $item (keys %$key) {
+                    print "$item $key->{$item}\n";
+                }
+            } else {
+                printf("%s\n", $key->{key});
+            }
+        }
+    } else {
+        # list buckets
+        my $buckets = $s3->buckets
+            or s3_error();
+        foreach my $bucket (@{$buckets->{buckets}}) {
+            print $bucket->bucket . "\n";
+        }
+    }
+}
+
+sub get_file { 
+    my ($bucket_name, $file_name) = argv_bucket_and_file();
+
+    ! -e $file_name or error("File '$file_name' already exists");
+
+    my $bucket=$s3->bucket($bucket_name);
+    $bucket->get_key_filename($file_name, "GET", $file_name)
+        or s3_error();
+}
+
+sub put_file { 
+    my ($bucket_name, $file_name) = argv_bucket_and_file();
+
+    -f $file_name or error("No such file '$file_name'");
+    -r $file_name or error("Can't open file '$file_name'");
+    ! -z $file_name or error("File '$file_name' is empty");
+
+    my $bucket=$s3->bucket($bucket_name);
+    $bucket->add_key_filename($file_name, $file_name)
+        or s3_error();
+}
+
+sub remove_file { 
+    my ($bucket_name, $file_name) = argv_bucket_and_file();
+    
+    my $bucket=$s3->bucket($bucket_name);
+    $bucket->delete_key($file_name)
+        or s3_error();
+} 
+
+sub diff_file {
+    my $bucket
+
+}
+
+sub make_bucket {
+    my $bucket_name = argv_bucket_name();
+    $s3->add_bucket( { bucket => $bucket_name } ) or s3_error();
+}
+
+sub remove_bucket { 
+    my $bucket_name = argv_bucket_name();
+    my $bucket=$s3->bucket($bucket_name);
+    $bucket->delete_bucket or s3_error();
+}
+
+my %commands = (
+    'ls'   => \&list_files,
+    'll'   => \&list_files,
+    'get'  => \&get_file,
+    'put'  => \&put_file,
+    'rm'   => \&remove_file,
+    'diff' => \&diff_file,
+    'mkbucket' => \&make_bucket,
+    'rmbucket' => \&remove_bucket,
+);
+
+$cmd = shift @ARGV;
+if (!defined($cmd)) {
+    usage_quit();
+}
+
+get_config();
+open_s3();
+
+if (defined($commands{$cmd})) {
+    $commands{$cmd}->();
+} else {
+    print STDERR "Unknown command '$cmd'\n";
+    exit(1);
+}
