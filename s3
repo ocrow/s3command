@@ -7,6 +7,7 @@
 
 use Net::Amazon::S3;
 use Text::Wrap;
+use File::stat;
 use strict;
 
 my (%config, $s3, $cmd);
@@ -16,16 +17,18 @@ sub usage_quit {
     print "\n$message\n" unless ($message eq '');
     print "\nusage: $0 <command> [parameters]\n";
     print "commands:\n";
-    print "   ls                   - list buckets\n";
-    print "   ls <bucket> [prefix] - list files\n";
-    print "   ll <bucket> [prefix] - list files in long format\n";
-    print "   get <bucket> <file>  - get file from S3\n";
-    print "   put <bucket> <file>  - put file to S3\n";
-    print "   rm <bucket> <file>   - remove a file from S3\n";
-    print "   diff <bucket> <file> "
+    print "   ls                     - list buckets\n";
+    print "   ls <bucket> [prefix]   - list files\n";
+    print "   ll <bucket> [prefix]   - list files in long format\n";
+    print "   get <bucket> <file>    - get file from S3\n";
+    print "   put <bucket> <file>    - put file to S3\n";
+    print "   rm <bucket> <file>     - remove a file from S3\n";
+    print "   info <bucket> <file>   - get metadata for a file from S3\n";
+    print "   diff <bucket> <file>   "
         . "- compare local file with stored S3 checksum\n";
-    print "   mkbucket <bucket>    - create a bucket\n";
-    print "   rmbucket <bucket>    - remove an empty bucket\n";
+    print "   update <bucket> <file> - put file to S3 if it has changed\n";
+    print "   mkbucket <bucket>      - create a bucket\n";
+    print "   rmbucket <bucket>      - remove an empty bucket\n";
     print "\n";
     exit(1);
 }
@@ -84,6 +87,12 @@ sub error {
     exit(1);
 }
 
+sub file_mtime {
+    # get file modification date
+    my ($file_name) = @_;
+    return (stat $file_name)->mtime;
+}
+
 sub list_files { 
     if (scalar(@ARGV) > 0) {
         my $bucket_name = $ARGV[0];
@@ -103,10 +112,6 @@ sub list_files {
                 $date =~ s/T/ /; $date =~ s/\.\d\d\dZ//;
                 printf("%10d  %s  %s\n", 
                     $key->{size}, $date, $key->{key});
-
-                foreach my $item (keys %$key) {
-                    print "$item $key->{$item}\n";
-                }
             } else {
                 printf("%s\n", $key->{key});
             }
@@ -127,20 +132,68 @@ sub get_file {
     ! -e $file_name or error("File '$file_name' already exists");
 
     my $bucket=$s3->bucket($bucket_name);
+    my $meta_data = $bucket->head_key($file_name);
+
+    # get file contents
     $bucket->get_key_filename($file_name, "GET", $file_name)
+        or s3_error();
+
+    my $remote_mtime = $meta_data->{'x-amz-meta-file-mtime'};
+    if (defined($remote_mtime)) {
+        utime time, $remote_mtime, $file_name;
+    }
+}
+
+sub put_file {
+    my ($bucket_name, $file_name) = argv_bucket_and_file();
+    send_file($bucket_name, $file_name);
+}
+
+sub send_file { 
+    my ($bucket_name, $file_name) = @_;
+
+    -f $file_name or error("No such file '$file_name'");
+    -r $file_name or error("Can't read file '$file_name'");
+    ! -z $file_name or error("File '$file_name' is empty");
+
+    # get file modification date
+    my $mtime = file_mtime($file_name);
+
+    my $bucket=$s3->bucket($bucket_name);
+
+    $bucket->add_key_filename($file_name, $file_name, {
+        'x-amz-meta-file-mtime' => $mtime})
         or s3_error();
 }
 
-sub put_file { 
+sub update_file {
+    # send file to S3 if it isn't already there or if it has changed
+    # as determined by file size and modification date 
+
     my ($bucket_name, $file_name) = argv_bucket_and_file();
 
-    -f $file_name or error("No such file '$file_name'");
-    -r $file_name or error("Can't open file '$file_name'");
-    ! -z $file_name or error("File '$file_name' is empty");
+    -f $file_name or error("File '$file_name' doesn't exist locally");
+    -r $file_name or error("File '$file_name' isn't readable");
 
     my $bucket=$s3->bucket($bucket_name);
-    $bucket->add_key_filename($file_name, $file_name)
-        or s3_error();
+    my $meta_data = $bucket->head_key($file_name);
+
+    # file doesn't exist on S3, so send it
+    if (!defined($meta_data)) {
+        send_file($bucket_name, $file_name);
+        return;
+    }
+    
+    # compare local and remote file sizes and modification times
+    my $local_size = (-s $file_name);
+    my $local_mtime = file_mtime($file_name);
+
+    my $remote_size = $meta_data->{content_length};
+    my $remote_mtime = $meta_data->{'x-amz-meta-file-mtime'};
+
+    if ($local_size != $remote_size || $local_mtime ne $remote_mtime) {
+        send_file($bucket_name, $file_name);
+    }
 }
 
 sub remove_file { 
@@ -151,9 +204,57 @@ sub remove_file {
         or s3_error();
 } 
 
-sub diff_file {
-    my $bucket
+sub file_info {
+    my ($bucket_name, $file_name) = argv_bucket_and_file();
+    my $bucket=$s3->bucket($bucket_name);
+    my $meta_data = $bucket->head_key($file_name);
 
+    if (!defined($meta_data)) { 
+        error("File '$file_name' doesn't exist on S3"); 
+    }
+    foreach my $key (keys %$meta_data) {
+        print "$key: $meta_data->{$key}\n" 
+            unless ($key eq "value");
+    }
+}
+
+sub diff_file {
+    # compare local file with version on S3 using file sizes and MD5 checksums
+    # to determine if the files differ
+    use Digest::MD5;
+    my ($bucket_name, $file_name) = argv_bucket_and_file();
+    
+    -f $file_name or error("File '$file_name' doesn't exist locally");
+    -r $file_name or error("File '$file_name' isn't readable");
+
+    my $bucket=$s3->bucket($bucket_name);
+    my $meta_data = $bucket->head_key($file_name);
+
+    defined($meta_data) or error("File '$file_name' doesn't exist on S3"); 
+
+    # compare file sizes
+    my $local_size = (-s $file_name);
+    my $remote_size = $meta_data->{content_length};
+
+    if ($local_size != $remote_size) {
+        printf STDERR "Files differ in size\nlocal:  %10d\nremote: %10d\n", 
+            $local_size, $remote_size;
+        exit(2);
+    }
+
+    # compare MD5 checksums
+    my $remote_md5 = $meta_data->{etag};
+    open FILE, $file_name or error("Can't read file '$file_name': $!");
+    binmode FILE;
+    my $md5 = Digest::MD5->new;
+    $md5->addfile(*FILE);
+    my $local_md5 = $md5->hexdigest;
+
+    if ($local_md5 ne $remote_md5) {
+        printf STDERR "File checksums differ\nlocal:  %s\nremote: %s\n",
+            $local_md5, $remote_md5;
+        exit(2);
+    }
 }
 
 sub make_bucket {
@@ -170,10 +271,12 @@ sub remove_bucket {
 my %commands = (
     'ls'   => \&list_files,
     'll'   => \&list_files,
+    'info' => \&file_info,
     'get'  => \&get_file,
     'put'  => \&put_file,
     'rm'   => \&remove_file,
     'diff' => \&diff_file,
+    'update' => \&update_file,
     'mkbucket' => \&make_bucket,
     'rmbucket' => \&remove_bucket,
 );
