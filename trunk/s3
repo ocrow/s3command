@@ -8,6 +8,7 @@
 use Net::Amazon::S3;
 use Text::Wrap;
 use File::stat;
+use File::Spec;
 use strict;
 
 my (%config, $s3, $cmd);
@@ -17,37 +18,62 @@ sub usage_quit {
     print "\n$message\n" unless ($message eq '');
     print "\nusage: $0 <command> [parameters]\n";
     print "commands:\n";
-    print "   ls                     - list buckets\n";
-    print "   ls <bucket> [prefix]   - list files\n";
-    print "   ll <bucket> [prefix]   - list files in long format\n";
-    print "   get <bucket> <file>    - get file from S3\n";
-    print "   put <bucket> <file>    - put file to S3\n";
-    print "   rm <bucket> <file>     - remove a file from S3\n";
-    print "   info <bucket> <file>   - get metadata for a file from S3\n";
-    print "   diff <bucket> <file>   "
+    print "   ls                            - list buckets\n";
+    print "   ls   <bucket>[:<path>]        - list files\n";
+    print "   ll   <bucket>[:<path>]        - list files in long format\n";
+    print "   get  <bucket>[:<path>] <file> - get file from S3\n";
+    print "   put  <bucket>[:<path>] <file> - put file to S3\n";
+    print "   push <bucket>[:<path>] <file> "
+        . "- put file to S3 if it has changed locally\n";
+    print "   rm   <bucket>[:<path>] <file> - remove a file from S3\n";
+    print "   info <bucket>[:<path>] <file> - display metadata for a file in S3\n";
+    print "   diff <bucket>[:<path>] <file> "
         . "- compare local file with stored S3 checksum\n";
-    print "   update <bucket> <file> - put file to S3 if it has changed\n";
-    print "   mkbucket <bucket>      - create a bucket\n";
-    print "   rmbucket <bucket>      - remove an empty bucket\n";
+    print "   mkbucket <bucket>             - create a bucket\n";
+    print "   rmbucket <bucket>             - remove an empty bucket\n";
     print "\n";
     exit(1);
 }
 
-sub argv_bucket_and_file {
-    # get a bucket name and a file name from the command arguments, or die
+sub argv_location_and_file {
+    # get a bucket, path and file from argv
+    # derive the S3 key from the path and file
+    # return the bucket, key and file
+
+    # get a bucket and file name from the command arguments, or die
     if (scalar(@ARGV) < 2) {
-        print STDERR "usage: $0 $cmd <bucket> <file>\n";
+        error("usage: $0 $cmd <bucket>[:<path>] <file>");
     }
-    return (shift @ARGV, shift @ARGV);
+    my ($bucket, $path) = split(/:/, shift @ARGV);
+    my ($file) = shift @ARGV;
+
+    # make sure path ends with /
+    if ($path ne '' && substr($path, -1, 1) ne '/') {
+        $path .= '/';
+    }
+    # get the filename part from the file path
+    my ($volume, $dir, $fname) = File::Spec->splitpath($file);
+    my $key = $path . $fname;
+    return ($bucket, $key, $file);
+}
+
+sub argv_location {
+    # get a bucket name, and optional path
+    # and a file name from the command arguments, or die
+    if (scalar(@ARGV) == 0) {
+        error("usage: $0 $cmd <bucket>[:<path>]");
+    }
+    my ($bucket, $path) = split(/:/, shift @ARGV);
+    return ($bucket, $path);
 }
 
 sub argv_bucket_name {
     # get a bucket name from the command arguments, or die
     if (scalar(@ARGV) == 0) {
-        print STDERR "usage: $0 $cmd <bucket>\n";
-        exit(1);
+        error("usage: $0 $cmd <bucket>");
     }
-    return shift @ARGV;
+    my ($bucket) = split(/:/, shift @ARGV);
+    return $bucket;
 }
 
 sub get_config {
@@ -87,20 +113,14 @@ sub error {
     exit(1);
 }
 
-sub file_mtime {
-    # get file modification date
-    my ($file_name) = @_;
-    return (stat $file_name)->mtime;
-}
-
 sub list_files { 
     if (scalar(@ARGV) > 0) {
-        my $bucket_name = $ARGV[0];
+        my ($bucket_name, $path) = argv_location();
         my %params;
 
         my $response = $s3->list_bucket_all({
             'bucket' => $bucket_name,
-            'prefix' => $ARGV[1]
+            'prefix' => $path
         }) or s3_error();
 
         exists $response->{bucket}
@@ -127,94 +147,102 @@ sub list_files {
 }
 
 sub get_file { 
-    my ($bucket_name, $file_name) = argv_bucket_and_file();
-
-    ! -e $file_name or error("File '$file_name' already exists");
+    my ($bucket_name, $key, $file) = argv_location_and_file();
 
     my $bucket=$s3->bucket($bucket_name);
-    my $meta_data = $bucket->head_key($file_name);
+    my $meta_data = $bucket->head_key($key)
+        or error("No such file '$key'");
+
+    # don't clobber local file
+    ! -e $file or error("File '$file' already exists");
 
     # get file contents
-    $bucket->get_key_filename($file_name, "GET", $file_name)
-        or s3_error();
+    $bucket->get_key_filename($key, "GET", $file)
+        or error("No such file '$key'");
 
     my $remote_mtime = $meta_data->{'x-amz-meta-file-mtime'};
     if (defined($remote_mtime)) {
-        utime time, $remote_mtime, $file_name;
+        utime time, $remote_mtime, $file;
     }
 }
 
 sub put_file {
-    my ($bucket_name, $file_name) = argv_bucket_and_file();
-    send_file($bucket_name, $file_name);
+    my ($bucket_name, $key, $file) = argv_location_and_file();
+    send_file($bucket_name, $key, $file);
 }
 
 sub send_file { 
-    my ($bucket_name, $file_name) = @_;
+    my ($bucket_name, $key, $file) = @_;
 
-    -f $file_name or error("No such file '$file_name'");
-    -r $file_name or error("Can't read file '$file_name'");
-    ! -z $file_name or error("File '$file_name' is empty");
+    -f $file or error("No such file '$file'");
+    -r $file or error("Can't read file '$file'");
 
     # get file modification date
-    my $mtime = file_mtime($file_name);
+    my $mtime = (stat $file)->mtime;
 
     my $bucket=$s3->bucket($bucket_name);
 
-    $bucket->add_key_filename($file_name, $file_name, {
-        'x-amz-meta-file-mtime' => $mtime})
-        or s3_error();
+    if (-z $file) {
+        # special case for empty files
+        $bucket->add_key($key, "", 
+            {'x-amz-meta-file-mtime' => $mtime})
+            or s3_error();
+    } else {
+        $bucket->add_key_filename($key, $file, 
+            {'x-amz-meta-file-mtime' => $mtime})
+            or s3_error();
+    }
 }
 
-sub update_file {
+sub push_file {
     # send file to S3 if it isn't already there or if it has changed
     # as determined by file size and modification date 
 
-    my ($bucket_name, $file_name) = argv_bucket_and_file();
+    my ($bucket_name, $key, $file) = argv_location_and_file();
 
-    -f $file_name or error("File '$file_name' doesn't exist locally");
-    -r $file_name or error("File '$file_name' isn't readable");
+    -f $file or error("File '$file' doesn't exist locally");
+    -r $file or error("File '$file' isn't readable");
 
     my $bucket=$s3->bucket($bucket_name);
-    my $meta_data = $bucket->head_key($file_name);
+    my $meta_data = $bucket->head_key($key);
 
     # file doesn't exist on S3, so send it
     if (!defined($meta_data)) {
-        send_file($bucket_name, $file_name);
+        send_file($bucket_name, $key, $file);
         return;
     }
     
     # compare local and remote file sizes and modification times
-    my $local_size = (-s $file_name);
-    my $local_mtime = file_mtime($file_name);
+    my $local_size = (-s $file);
+    my $local_mtime = (stat $file)->mtime;
 
     my $remote_size = $meta_data->{content_length};
     my $remote_mtime = $meta_data->{'x-amz-meta-file-mtime'};
 
     if ($local_size != $remote_size || $local_mtime ne $remote_mtime) {
-        send_file($bucket_name, $file_name);
+        send_file($bucket_name, $key, $file);
     }
 }
 
 sub remove_file { 
-    my ($bucket_name, $file_name) = argv_bucket_and_file();
+    my ($bucket_name, $key, $file) = argv_location_and_file();
     
     my $bucket=$s3->bucket($bucket_name);
-    $bucket->delete_key($file_name)
+    $bucket->delete_key($key)
         or s3_error();
 } 
 
 sub file_info {
-    my ($bucket_name, $file_name) = argv_bucket_and_file();
+    my ($bucket_name, $key, $file) = argv_location_and_file();
     my $bucket=$s3->bucket($bucket_name);
-    my $meta_data = $bucket->head_key($file_name);
+    my $meta_data = $bucket->head_key($key);
 
     if (!defined($meta_data)) { 
-        error("File '$file_name' doesn't exist on S3"); 
+        error("File '$key' doesn't exist in $bucket_name"); 
     }
-    foreach my $key (keys %$meta_data) {
-        print "$key: $meta_data->{$key}\n" 
-            unless ($key eq "value");
+    foreach my $field (keys %$meta_data) {
+        print "$field: $meta_data->{$field}\n" 
+            unless ($field eq "value");
     }
 }
 
@@ -222,18 +250,18 @@ sub diff_file {
     # compare local file with version on S3 using file sizes and MD5 checksums
     # to determine if the files differ
     use Digest::MD5;
-    my ($bucket_name, $file_name) = argv_bucket_and_file();
+    my ($bucket_name, $key, $file) = argv_location_and_file();
     
-    -f $file_name or error("File '$file_name' doesn't exist locally");
-    -r $file_name or error("File '$file_name' isn't readable");
+    -f $file or error("File '$file' doesn't exist locally");
+    -r $file or error("File '$file' isn't readable");
 
     my $bucket=$s3->bucket($bucket_name);
-    my $meta_data = $bucket->head_key($file_name);
+    my $meta_data = $bucket->head_key($key);
 
-    defined($meta_data) or error("File '$file_name' doesn't exist on S3"); 
+    defined($meta_data) or error("File '$key' doesn't exist on S3"); 
 
     # compare file sizes
-    my $local_size = (-s $file_name);
+    my $local_size = (-s $file);
     my $remote_size = $meta_data->{content_length};
 
     if ($local_size != $remote_size) {
@@ -244,7 +272,7 @@ sub diff_file {
 
     # compare MD5 checksums
     my $remote_md5 = $meta_data->{etag};
-    open FILE, $file_name or error("Can't read file '$file_name': $!");
+    open FILE, $file or error("Can't read file '$file': $!");
     binmode FILE;
     my $md5 = Digest::MD5->new;
     $md5->addfile(*FILE);
@@ -274,9 +302,9 @@ my %commands = (
     'info' => \&file_info,
     'get'  => \&get_file,
     'put'  => \&put_file,
+    'push' => \&push_file,
     'rm'   => \&remove_file,
     'diff' => \&diff_file,
-    'update' => \&update_file,
     'mkbucket' => \&make_bucket,
     'rmbucket' => \&remove_bucket,
 );
