@@ -64,6 +64,11 @@ sub argv_location {
         error("usage: $0 $cmd <bucket>[:<path>]");
     }
     my ($bucket, $path) = split(/:/, shift @ARGV);
+
+    # make sure path ends with /
+    if ($path ne '' && substr($path, -1, 1) ne '/') {
+        $path .= '/';
+    }
     return ($bucket, $path);
 }
 
@@ -82,7 +87,7 @@ sub get_config {
         or die "Couldn't open config file '$rcfile'";
     while(<RC>) {
         m/(\S+)\s*:\s*(\S+)/;
-        $config{$1} = $2;
+        $config{$1} = $2 if (defined $1);
     }
     close RC;
     if (!defined($config{'aws_access_key_id'})) {
@@ -127,13 +132,19 @@ sub list_files {
             or error("No such bucket '$bucket_name'");
 
         foreach my $key (@{$response->{keys}}) {
+            my $name = $key->{key};
+
+            # strip off the path from the results
+            if (index($name, $path) == 0) {
+                $name = substr($name, length($path));
+            }
             if ($cmd eq 'll') {
                 my $date = $key->{last_modified};
                 $date =~ s/T/ /; $date =~ s/\.\d\d\dZ//;
                 printf("%10d  %s  %s\n", 
-                    $key->{size}, $date, $key->{key});
+                    $key->{size}, $date, $name);
             } else {
-                printf("%s\n", $key->{key});
+                printf("%s\n", $name);
             }
         }
     } else {
