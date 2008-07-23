@@ -249,6 +249,7 @@ sub push_file {
 
     if ($local_size != $remote_size || $local_mtime ne $remote_mtime) {
         send_file($bucket_name, $key, $file);
+        return;
     }
     exit(2);
 }

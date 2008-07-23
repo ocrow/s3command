@@ -72,19 +72,19 @@ ok($status == 0, "Make a bucket");
 $found = find_item("./s3 ls", $bucket);
 ok($found == 1, "Locate test bucket");
 
-$status = system("./s3 put $bucket:$path $test_file");
+$status = system("./s3 put $bucket/$path $test_file");
 ok ($status == 0, "Put file to S3");
 
-$found = find_item("./s3 ls $bucket:$path", $test_file);
+$found = find_item("./s3 ls $bucket/$path", $test_file);
 ok ($found == 1, "Find file in S3");
 
-my @list1 = read_file_list("$bucket:$path", $test_file);
+my @list1 = read_file_list("$bucket/$path", $test_file);
 ok ($list1[2] eq $test_file, "File list contains test file");
 ok ($list1[0] == length($test_data), 
     "File list reports correct file length");
 
 my %info;
-open INFO, "./s3 info $bucket:$path $test_file|";
+open INFO, "./s3 info $bucket/$path $test_file|";
 while (<INFO>) {
     chomp;
     my ($key, $value) = split ": ";
@@ -94,14 +94,14 @@ close INFO;
 ok ($info{'content_length'} == length($test_data), 
     "Read info content length");
 
-$status = system("./s3 push $bucket:$path $test_file");
-ok ($status == 0, "Push unchanged file to S3");
+$status = system("./s3 push $bucket/$path $test_file");
+ok (($status >> 8) == 2, "Push unchanged file to S3");
 
-my @list2 = read_file_list("$bucket:$path", $test_file);
+my @list2 = read_file_list("$bucket/$path", $test_file);
 ok ($list2[0] == length($test_data), "Size unchanged");
 ok ($list2[1] eq $list1[1], "Modified date unchanged");
 
-$result = `./s3 diff $bucket:$path $test_file 2>&1`;
+$result = `./s3 diff $bucket/$path $test_file 2>&1`;
 ok ($? == 0, "File unchanged on server");
 
 open TF, ">$test_file"
@@ -109,20 +109,20 @@ open TF, ">$test_file"
 print TF $test2_data;
 close TF;
 
-$result = `./s3 diff $bucket:$path $test_file 2>&1`;
+$result = `./s3 diff $bucket/$path $test_file 2>&1`;
 ok ($? != 0, "File changed on server");
 
-$status = system("./s3 push $bucket:$path $test_file");
+$status = system("./s3 push $bucket/$path $test_file");
 ok ($status == 0, "Push changed file to S3");
 
-my @list3 = read_file_list("$bucket:$path", $test_file);
+my @list3 = read_file_list("$bucket/$path", $test_file);
 ok ($list3[0] == length($test2_data), "Size unchanged");
 ok ($list3[1] ne $list2[1], "Modified date now changed");
 
 unlink $test_file;
 ok (! -e $test_file, "Delete test file locally");
 
-$status = system("./s3 get $bucket:$path $test_file");
+$status = system("./s3 get $bucket/$path $test_file");
 ok ($status == 0, "Get file from S3");
 
 ok (-r $test_file, "Retrieved file is readable");
@@ -136,10 +136,10 @@ ok (scalar(@lines) == 1, "Retrieved file is one line long");
 ok ($lines[0] eq $test2_data, "Retrieved file contains correct data");
 
 
-$status = system("./s3 rm $bucket:$path $test_file");
+$status = system("./s3 rm $bucket/$path $test_file");
 ok ($status == 0, "Remove test file from S3");
 
-$found = find_item("./s3 ls $bucket:$path", $test_file);
+$found = find_item("./s3 ls $bucket/$path", $test_file);
 ok ($found == 0, "Test file removed");
 
 unlink $test_file;
