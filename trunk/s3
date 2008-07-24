@@ -26,7 +26,7 @@ sub usage_quit {
     print "   get  <bucket>[/<path>] <file> - get file from S3\n";
     print "   put  <bucket>[/<path>] <file> - put file to S3\n";
     print "   push <bucket>[/<path>] <file> "
-        . "- put file to S3 if it has changed locally\n";
+        . "- put version to S3 if file has changed\n";
     print "   rm   <bucket>[/<path>] <file> - remove a file from S3\n";
     print "   info <bucket>[/<path>] <file> - display metadata for a file in S3\n";
     print "   diff <bucket>[/<path>] <file> "
@@ -138,8 +138,8 @@ sub list_files {
     exists $response->{bucket}
         or error("No such bucket '$bucket_name'");
 
-    foreach my $k (@{$response->{common_prefixes}}) {
-        print $k . "/\n";
+    foreach my $prefix (@{$response->{common_prefixes}}) {
+        print "$prefix/\n";
     }
 
     foreach my $key (@{$response->{keys}}) {
@@ -196,12 +196,6 @@ sub get_file {
     }
 }
 
-sub get_files {
-    my ($bucket_name) = shift;
-    my ($key) = shift;
-    
-}
-
 sub put_file {
     my ($bucket_name, $key, $file) = argv_location_and_file();
     send_file($bucket_name, $key, $file);
@@ -230,35 +224,64 @@ sub send_file {
     }
 }
 
-sub new_version {
-    # find an unused version number to upload for a file that already
-    # exists in s3
+sub latest_version_info {
+    # retrieve file info of most recent available version of a file in s3
 
     my ($bucket_name, $key) = @_;
+    my $response = $s3->list_bucket_all({
+        'bucket' => $bucket_name,
+        'prefix' => $key,
+    }) or s3_error();
 
-    
+    exists $response->{bucket}
+        or error("No such bucket '$bucket_name'");
 
+    # store hash of key name => key info
+    my %existing_keys;
+    foreach my $k (@{$response->{keys}}) {
+        $existing_keys{$k->{key}} = $k;
+    }
+
+    # find highest used version number
+    my $version = 0;
+    $version += 1 while (defined($existing_keys{
+        "$key," . ($version + 1)
+    }));
+
+    my $vkey = version_key($key, $version);
+    my $key_data = $existing_keys{$vkey};
+    $key_data->{version} = $version if (defined($key_data)); 
+    return $key_data;
+}
+
+sub version_key {
+    # get version_key for a given version number and base key
+    my ($key, $version) = @_;
+    return ($version == 0) ? $key : "$key,$version";
 }
 
 sub push_file {
     # send file to S3 if it isn't already there 
     # if it has changed, as determined by file size and modification date 
-    # send the new version (keeping the previous version intact)
+    # send the new version (keeping the previous version(s) intact)
 
     my ($bucket_name, $key, $file) = argv_location_and_file();
 
     -f $file or error("File '$file' doesn't exist locally");
     -r $file or error("File '$file' isn't readable");
 
-    my $bucket=$s3->bucket($bucket_name);
-    my $meta_data = $bucket->head_key($key);
+    my $file_info = latest_version_info($bucket_name, $key);
 
     # file doesn't exist on S3, so send it
-    if (!defined($meta_data)) {
+    if (!defined($file_info)) {
         send_file($bucket_name, $key, $file);
         return;
     }
     
+    my $version_key = $file_info->{key};
+    my $bucket=$s3->bucket($bucket_name);
+    my $meta_data = $bucket->head_key($version_key);
+
     # compare local and remote file sizes and modification times
     my $local_size = (-s $file);
     my $local_mtime = (stat $file)->mtime;
@@ -267,8 +290,9 @@ sub push_file {
     my $remote_mtime = $meta_data->{'x-amz-meta-file-mtime'};
 
     if ($local_size != $remote_size || $local_mtime ne $remote_mtime) {
-        print "bucket: $bucket_name\nkey: $key\nfile: $file\n";
-        # send_file($bucket_name, $key, $file);
+        my $new_version = $file_info->{version} + 1;
+        my $new_version_key = version_key($key, $new_version);
+        send_file($bucket_name, $new_version_key, $file);
         return;
     }
     exit(2);
