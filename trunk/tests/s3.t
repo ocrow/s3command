@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 
 use strict;
-use Test::More tests => 27;
+use Test::More tests => 37;
 use Data::UUID;
 use File::Copy;
 
@@ -47,9 +47,10 @@ sub read_file_list {
 
 my ($bucket, $status, $found, $result, @fields, @lines);
 my $path = "test_path";
-my $test_file = "test_file1";
+my $test_file = "test_file";
+my $test2_file = "test_file,1";
 my $test_data = "Test Data\n";
-my $test2_data = "Mochi Ice\n";
+my $test2_data = "Mochi Icecream\n";
 
 # write to test file
 open TF, ">$test_file"
@@ -110,22 +111,33 @@ print TF $test2_data;
 close TF;
 
 $result = `./s3 diff $bucket/$path $test_file 2>&1`;
-ok ($? != 0, "File changed on server");
+ok ($? != 0, "Modified file changed compared to server");
 
 $status = system("./s3 push $bucket/$path $test_file");
 ok ($status == 0, "Push changed file to S3");
 
 my @list3 = read_file_list("$bucket/$path", $test_file);
-ok ($list3[0] == length($test2_data), "Size unchanged");
-ok ($list3[1] ne $list2[1], "Modified date now changed");
+ok ($list3[0] == length($test_data), "Original size correct");
+ok ($list3[1] eq $list1[1], "Original date unchanged");
+
+my @list4 = read_file_list("$bucket/$path", "$test2_file");
+ok ($list4[0] == length($test2_data), "Modified size correct");
+ok ($list4[1] ne $list1[1], "Modified date changed");
 
 unlink $test_file;
-ok (! -e $test_file, "Delete test file locally");
+ok (! -e $test_file, "Delete original file locally");
+
+unlink $test_file;
+ok (! -e $test_file, "Delete modified file locally");
 
 $status = system("./s3 get $bucket/$path $test_file");
-ok ($status == 0, "Get file from S3");
+ok ($status == 0, "Get original file from S3");
 
-ok (-r $test_file, "Retrieved file is readable");
+$status = system("./s3 get $bucket/$path $test_file,1");
+ok ($status == 0, "Get modified file from S3");
+
+ok (-r $test_file, "Retrieved original file is readable");
+ok (-r $test2_file, "Retrieved modified file is readable");
 
 open TF, $test_file
     or BAIL_OUT("Couldn't read test file '$test_file'");
@@ -133,17 +145,33 @@ open TF, $test_file
 close TF;
 
 ok (scalar(@lines) == 1, "Retrieved file is one line long");
-ok ($lines[0] eq $test2_data, "Retrieved file contains correct data");
+ok ($lines[0] eq $test_data, "Retrieved file contains correct data");
 
+open TF, $test2_file
+    or BAIL_OUT("Couldn't read test file '$test_file'");
+@lines = <TF>;
+close TF;
+
+ok (scalar(@lines) == 1, "Modified file is one line long");
+ok ($lines[0] eq $test2_data, "Modified file contains correct data");
 
 $status = system("./s3 rm $bucket/$path $test_file");
-ok ($status == 0, "Remove test file from S3");
+ok ($status == 0, "Remove original test file from S3");
+
+$status = system("./s3 rm $bucket/$path $test2_file");
+ok ($status == 0, "Remove modified test file from S3");
 
 $found = find_item("./s3 ls $bucket/$path", $test_file);
-ok ($found == 0, "Test file removed");
+ok ($found == 0, "Original test file removed");
+
+$found = find_item("./s3 ls $bucket/$path", $test2_file);
+ok ($found == 0, "Modified test file removed");
 
 unlink $test_file;
-ok (! -e $test_file, "Local test file removed");
+ok (! -e $test_file, "Original local test file removed");
+
+unlink $test2_file;
+ok (! -e $test2_file, "Modified local test file removed");
 
 $status = system("./s3 rmbucket $bucket");
 ok ($status == 0, "Remove a bucket");
