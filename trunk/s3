@@ -125,46 +125,54 @@ sub error {
 }
 
 sub list_files { 
+    # list files in given location
+    my ($bucket_name, $path) = argv_location();
+    my %params;
+
+    my $response = $s3->list_bucket_all({
+        'bucket' => $bucket_name,
+        'prefix' => $path,
+        'delimiter' => '/',
+    }) or s3_error();
+
+    exists $response->{bucket}
+        or error("No such bucket '$bucket_name'");
+
+    foreach my $k (@{$response->{common_prefixes}}) {
+        print $k . "/\n";
+    }
+
+    foreach my $key (@{$response->{keys}}) {
+        my $name = $key->{key};
+
+        # strip off the path from the results
+        if (index($name, $path) == 0) {
+            $name = substr($name, length($path));
+        }
+        if ($cmd eq 'll') {
+            my $date = $key->{last_modified};
+            $date =~ s/T/ /; $date =~ s/\.\d\d\dZ//;
+            printf("%10d  %s  %s\n", 
+                $key->{size}, $date, $name);
+        } else {
+            printf("%s\n", $name);
+        }
+    }
+}
+
+sub list_buckets {
+    my $buckets = $s3->buckets
+        or s3_error();
+    foreach my $bucket (@{$buckets->{buckets}}) {
+        print $bucket->bucket . "\n";
+    }
+}
+
+sub show_list {
     if (scalar(@ARGV) > 0) {
-        my ($bucket_name, $path) = argv_location();
-        my %params;
-
-        my $response = $s3->list_bucket_all({
-            'bucket' => $bucket_name,
-            'prefix' => $path,
-            'delimiter' => '/',
-        }) or s3_error();
-
-        exists $response->{bucket}
-            or error("No such bucket '$bucket_name'");
-
-        foreach my $k (@{$response->{common_prefixes}}) {
-            print $k . "/\n";
-        }
-
-        foreach my $key (@{$response->{keys}}) {
-            my $name = $key->{key};
-
-            # strip off the path from the results
-            if (index($name, $path) == 0) {
-                $name = substr($name, length($path));
-            }
-            if ($cmd eq 'll') {
-                my $date = $key->{last_modified};
-                $date =~ s/T/ /; $date =~ s/\.\d\d\dZ//;
-                printf("%10d  %s  %s\n", 
-                    $key->{size}, $date, $name);
-            } else {
-                printf("%s\n", $name);
-            }
-        }
+        list_files();
     } else {
-        # list buckets
-        my $buckets = $s3->buckets
-            or s3_error();
-        foreach my $bucket (@{$buckets->{buckets}}) {
-            print $bucket->bucket . "\n";
-        }
+        list_buckets();
     }
 }
 
@@ -222,9 +230,20 @@ sub send_file {
     }
 }
 
+sub new_version {
+    # find an unused version number to upload for a file that already
+    # exists in s3
+
+    my ($bucket_name, $key) = @_;
+
+    
+
+}
+
 sub push_file {
-    # send file to S3 if it isn't already there or if it has changed
-    # as determined by file size and modification date 
+    # send file to S3 if it isn't already there 
+    # if it has changed, as determined by file size and modification date 
+    # send the new version (keeping the previous version intact)
 
     my ($bucket_name, $key, $file) = argv_location_and_file();
 
@@ -248,7 +267,8 @@ sub push_file {
     my $remote_mtime = $meta_data->{'x-amz-meta-file-mtime'};
 
     if ($local_size != $remote_size || $local_mtime ne $remote_mtime) {
-        send_file($bucket_name, $key, $file);
+        print "bucket: $bucket_name\nkey: $key\nfile: $file\n";
+        # send_file($bucket_name, $key, $file);
         return;
     }
     exit(2);
@@ -327,8 +347,8 @@ sub remove_bucket {
 }
 
 my %commands = (
-    'ls'   => \&list_files,
-    'll'   => \&list_files,
+    'ls'   => \&show_list,
+    'll'   => \&show_list,
     'info' => \&file_info,
     'get'  => \&get_file,
     'put'  => \&put_file,
