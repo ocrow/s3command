@@ -436,16 +436,16 @@ commands:
 =head1 DESCRIPTION
 
 B<s3> provides a command line interface to Amazon 
-Simple Storage Services (Amazon S3). You can list files on S3, get and 
-retrieve files, delete files, create and delete buckets. B<s3> uses
+Simple Storage Services (Amazon S3).  You can list files on S3, get and 
+retrieve files, delete files, create and delete buckets.  B<s3> uses
 the Net::Amazon::S3 perl module to communicate with the Amazon S3 service.
 
 =head2 Configuration
 
 Two pieces of identifying information are required to access Amazon S3 - your
-Access Key ID and your Secret Access Key. After signing up for
+Access Key ID and your Secret Access Key.  After signing up for
 Amazon Web Services find these on the AWS Access Identifiers web page.
-Put the two keys into the ~/.s3rc file. Use the following format, 
+Put the two keys into the ~/.s3rc file.  Use the following format, 
 replacing Xs with your actual keys:
 
  aws_access_key_id: XXXXXXXXXXXXXXXXXXXX
@@ -453,9 +453,9 @@ replacing Xs with your actual keys:
 
 =head2 Buckets
 
-Files are stored on Amazon S3 in buckets. You must create at least one bucket in
-which to store your files. The set of available bucket names is shared 
-with all other Amazon S3 users. Choosing a bucket name that includes
+Files are stored on Amazon S3 in buckets.  You must create at least one bucket in
+which to store your files.  The set of available bucket names is shared 
+with all other Amazon S3 users.  Choosing a bucket name that includes
 a domain name that you control may help in finding a bucket name that 
 isn't already in use.
 
@@ -463,12 +463,12 @@ isn't already in use.
 
 =item s3 mkbucket <bucket>
 
-Create a new bucket in S3. If the bucket already exists an error is reported
+Create a new bucket in S3.  If the bucket already exists an error is reported
 only if the bucket is owned by someone else and you don't have access to it.
 
 =item s3 rmbucket <bucket>
 
-Delete an empty bucket from S3. An error is reported if the bucket isn't empty
+Delete an empty bucket from S3.  An error is reported if the bucket isn't empty
 or if you don't have access to it.
 
 =item s3 ls
@@ -478,18 +478,18 @@ Display a list of the buckets to which you have access.
 =head2 Listing files
 
 B<s3> organizes files within each bucket in a hierarchy, similar to a
-filesystem directory structure. The "/" slash character is used to separate
+filesystem directory structure.  The "/" slash character is used to separate
 the bucket name from the path and to divide the path into 
-directory components. Directories in S3 are not explicitly 
-created or deleted. A directory exists when it contains at least one file, 
+directory components.  Directories in S3 are not explicitly 
+created or deleted.  A directory exists when it contains at least one file, 
 and disappears once the final file in that directory is deleted.
 
 =item s3 ls [-l] <bucket>[/<path>]
 
-Display a list of S3 directories and files. Directories are listed first,
-each with a trailing slash. Files are listed next, in alphabetical order. 
+Display a list of S3 directories and files.  Directories are listed first,
+each with a trailing slash.  Files are listed next, in alphabetical order. 
 If the C<-l> flag is used a long listing is generated showing the size
-in bytes and the modification time of each file. Only files and
+in bytes and the modification time of each file.  Only files and
 directories at the specified path are listed, or top-level files and 
 directories if no path is given.
 
@@ -501,28 +501,28 @@ This is similar to ls, except it descends all directories recursively.
 =head2 Manipulating files
 
 B<s3> assumes that files will have the same filename in Amazon S3 as they
-do on the local file system. B<s3> does not require the local directory
+do on the local file system.  B<s3> does not require the local directory
 structure to match the path structure in Amazon S3. 
 
 Commands to manipulate files take an S3 location parameter followed by
-a local file parameter. The location parameter consists of a bucket 
-name followed by an optional path within that bucket. The path does not include
-the file name. The file 
+a local file parameter.  The location parameter consists of a bucket 
+name followed by an optional path within that bucket.  The path does not include
+the file name.  The file 
 parameter specifies the path to the file on the local filesystem, including
-the file name. The name of the file on S3 is inferred to be the same 
+the file name.  The name of the file on S3 is inferred to be the same 
 as the local file name (i.e. the last element of the file path).
 
 =item s3 get <bucket>[/<path>] <file>
 
-Get a file from S3. An error is reported if the file already exists locally.
+Get a file from S3.  An error is reported if the file already exists locally.
 
 The modification date of the local file is reset to that of the original
-local file. This ensures that putting a file and then getting it doesn't
+local file.  This ensures that putting a file and then getting it doesn't
 affect the file modification date.
 
 =item s3 put <bucket>[/<path>] <file>
 
-Put a file to S3. An error is reported if the local file can't be read.  
+Put a file to S3.  An error is reported if the local file can't be read.
 If the file already exists in S3 it is overwritten. 
 
 =item s3 push <bucket>[/<path>] <file>
