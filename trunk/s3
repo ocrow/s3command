@@ -9,6 +9,7 @@ use Net::Amazon::S3;
 use Text::Wrap;
 use File::stat;
 use File::Spec;
+use Getopt::Std;
 use strict;
 
 my $VERSION = 0.5;
@@ -43,7 +44,9 @@ sub argv_location {
     if (scalar(@ARGV) == 0) {
         error("usage: $0 $cmd <bucket>[/<path>]");
     }
+
     my $location = shift @ARGV;
+
     my ($bucket, $path) = split(/\//, $location, 2);
 
     if ($bucket eq '') {
@@ -124,32 +127,44 @@ sub error {
     exit(1);
 }
 
+sub strip_prefix {
+    my ($string, $prefix) = @_;
+    if (index($string, $prefix) == 0) {
+        $string = substr($string, length($prefix));
+    }
+    return $string;
+}
+
 sub list_files { 
     # list files in given location
-    my ($bucket_name, $path) = argv_location();
-    my %params;
+    my %options;
+    getopts('l', \%options);
 
-    my $response = $s3->list_bucket_all({
+    my ($bucket_name, $path) = argv_location();
+    my %params = (
         'bucket' => $bucket_name,
         'prefix' => $path,
-        'delimiter' => '/',
-    }) or s3_error();
+    );
+    $params{'delimiter'} = '/' if ($cmd eq 'ls');
+
+    my $response = $s3->list_bucket_all(\%params)
+        or s3_error();
 
     exists $response->{bucket}
         or error("No such bucket '$bucket_name'");
 
-    foreach my $prefix (@{$response->{common_prefixes}}) {
-        print "$prefix/\n";
+    foreach my $dir (@{$response->{common_prefixes}}) {
+        # strip off the path from the results
+        $dir = strip_prefix($dir, $path);
+        print "$dir/\n";
     }
 
     foreach my $key (@{$response->{keys}}) {
         my $name = $key->{key};
 
         # strip off the path from the results
-        if (index($name, $path) == 0) {
-            $name = substr($name, length($path));
-        }
-        if ($cmd eq 'll') {
+        $name = strip_prefix($name, $path);
+        if (defined($options{l})) {
             my $date = $key->{last_modified};
             $date =~ s/T/ /; $date =~ s/\.\d\d\dZ//;
             printf("%10d  %s  %s\n", 
@@ -372,7 +387,7 @@ sub remove_bucket {
 
 my %commands = (
     'ls'   => \&show_list,
-    'll'   => \&show_list,
+    'find' => \&show_list,
     'info' => \&file_info,
     'get'  => \&get_file,
     'put'  => \&put_file,
@@ -387,7 +402,6 @@ $cmd = shift @ARGV;
 if (!defined($cmd)) {
     usage_quit();
 }
-
 get_config();
 open_s3();
 
