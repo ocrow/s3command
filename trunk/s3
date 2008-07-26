@@ -251,20 +251,23 @@ sub latest_version_info {
     exists $response->{bucket}
         or error("No such bucket '$bucket_name'");
 
-    # store hash of key name => key info
-    my %existing_keys;
-    foreach my $k (@{$response->{keys}}) {
-        $existing_keys{$k->{key}} = $k;
-    }
-
     # find highest used version number
-    my $version = 0;
-    $version += 1 while (defined($existing_keys{
-        "$key," . ($version + 1)
-    }));
-
-    my $vkey = version_key($key, $version);
-    my $key_data = $existing_keys{$vkey};
+    
+    my ($version, $max_version, $key_data);
+    foreach my $k (@{$response->{keys}}) {
+        my $suffix = strip_prefix($k->{key}, $key);
+        if ($suffix eq '') {
+            $version = 0;
+        } elsif ($suffix =~ /^,(\d+)$/) {
+            $version = $1;
+        } else {
+            next;
+        }
+        if ($version > $max_version) {
+            $max_version = $version;
+            $key_data = $k;
+        }
+    }
     $key_data->{version} = $version if (defined($key_data)); 
     return $key_data;
 }
@@ -415,28 +418,26 @@ if (defined($commands{$cmd})) {
 
 =head1 NAME
 
-s3 - tool for manipulating files stored in Amazon S4
+s3 - tool for manipulating files stored in Amazon S3
 
 =head1 SYNOPSIS
 
-s3 <command> [parameters]
-commands:
-   ls 
-   ls   [-l] <bucket>[/<path>]
-   find [-l] <bucket>[/<path>]
-   get  <bucket>[/<path>] <file>
-   put  <bucket>[/<path>] <file>
-   push <bucket>[/<path>] <file>
-   rm   <bucket>[/<path>] <file>
-   info <bucket>[/<path>] <file>
-   diff <bucket>[/<path>] <file>
-   mkbucket <bucket> 
-   rmbucket <bucket>
+ s3 ls 
+ s3 ls   [-l] <bucket>[/<path>]
+ s3 find [-l] <bucket>[/<path>]
+ s3 get  <bucket>[/<path>] <file>
+ s3 put  <bucket>[/<path>] <file>
+ s3 push <bucket>[/<path>] <file>
+ s3 rm   <bucket>[/<path>] <file>
+ s3 info <bucket>[/<path>] <file>
+ s3 diff <bucket>[/<path>] <file>
+ s3 mkbucket <bucket> 
+ s3 rmbucket <bucket>
 
 =head1 DESCRIPTION
 
 B<s3> provides a command line interface to Amazon 
-Simple Storage Services (Amazon S3).  You can list files on S3, get and 
+Simple Storage Service.  You can list files on S3, get and 
 retrieve files, delete files, create and delete buckets.  B<s3> uses
 the Net::Amazon::S3 perl module to communicate with the Amazon S3 service.
 
@@ -527,14 +528,19 @@ If the file already exists in S3 it is overwritten.
 
 =item s3 push <bucket>[/<path>] <file>
 
-Put a file to S3 only if the file doesn't already exist in S3 and keeping 
-any previous stored versions intact. 
-
+Put a file to S3 only if necessary.  
 If the file already exists in S3 and has the same size and modification 
 date as the local file, no action is taken.  
+
 If the local file has changed since the S3 copy was made, as judged 
-by the file size and modification date, a new copy is sent to S3 with 
-a comma and file version number appended to the file name. 
+by the file size and modification date, a new copy is sent to S3.
+Rather than overwriting the original, a file version number is appended 
+to the file name. File version numbers are separated from the rest of 
+the file name by a comma, 
+and begin at one for the first copy after the original.
+
+When checking if the file has been modified, the most recent available 
+version in S3 is used.
 
 =item s3 rm <bucket>[/<path>] <file>
 
