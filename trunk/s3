@@ -263,7 +263,7 @@ sub latest_version_info {
         } else {
             next;
         }
-        if ($version > $max_version) {
+        if ($version >= $max_version) {
             $max_version = $version;
             $key_data = $k;
         }
@@ -338,43 +338,43 @@ sub file_info {
     }
 }
 
-sub diff_file {
-    # compare local file with version on S3 using file sizes and MD5 checksums
-    # to determine if the files differ
+sub md5_file {
+    # get md5 checksum of local file
+    my ($file) = @_;
     use Digest::MD5;
-    my ($bucket_name, $key, $file) = argv_location_and_file();
-    
-    -f $file or error("File '$file' doesn't exist locally");
-    -r $file or error("File '$file' isn't readable");
 
-    my $bucket=$s3->bucket($bucket_name);
-    my $meta_data = $bucket->head_key($key);
-
-    defined($meta_data) or error("File '$key' doesn't exist on S3"); 
-
-    # compare file sizes
-    my $local_size = (-s $file);
-    my $remote_size = $meta_data->{content_length};
-
-    if ($local_size != $remote_size) {
-        printf STDERR "Files differ in size\nlocal:  %10d\nremote: %10d\n", 
-            $local_size, $remote_size;
-        exit(2);
-    }
-
-    # compare MD5 checksums
-    my $remote_md5 = $meta_data->{etag};
     open FILE, $file or error("Can't read file '$file': $!");
     binmode FILE;
     my $md5 = Digest::MD5->new;
     $md5->addfile(*FILE);
-    my $local_md5 = $md5->hexdigest;
+    return $md5->hexdigest;
+}
+
+sub diff_file {
+    # compare local file with version on S3 using file sizes and MD5 checksums
+    # to determine if the files differ
+
+    my ($bucket_name, $key, $file) = argv_location_and_file();
+
+    -f $file or error("File '$file' doesn't exist locally");
+    -r $file or error("File '$file' isn't readable");
+
+    my $file_info = latest_version_info($bucket_name, $key);
+
+    defined($file_info) or error("File '$key' doesn't exist on S3"); 
+
+    # compare MD5 checksums
+    my $remote_md5 = $file_info->{etag};
+    my $local_md5 = md5_file($file);
 
     if ($local_md5 ne $remote_md5) {
-        printf STDERR "File checksums differ\nlocal:  %s\nremote: %s\n",
-            $local_md5, $remote_md5;
+        printf STDERR "Checksum differs %s\n"
+            . "local:  %s\n"
+            . "remote: %s\n",
+            $file_info->{key}, $local_md5, $remote_md5;
         exit(2);
     }
+    printf "Identical $file_info->{key}\n";
 }
 
 sub make_bucket {
@@ -528,34 +528,44 @@ If the file already exists in S3 it is overwritten.
 
 =item s3 push <bucket>[/<path>] <file>
 
-Put a file to S3 only if necessary.  
-If the file already exists in S3 and has the same size and modification 
-date as the local file, no action is taken.  
+Put a file to S3 unless it's already there and without overwriting it.
+The file is not sent if it already exists in S3 and has the same
+size and modification date as the the local file.
 
-If the local file has changed since the S3 copy was made, as judged 
-by the file size and modification date, a new copy is sent to S3.
-Rather than overwriting the original, a file version number is appended 
-to the file name. File version numbers are separated from the rest of 
-the file name by a comma, 
-and begin at one for the first copy after the original.
-
-When checking if the file has been modified, the most recent available 
-version in S3 is used.
+If the local file has changed, a new copy is saved to S3 with a version
+number appended to the file name. The version number is separated 
+from the rest of the file name by a comma.  If several versions of a 
+file already exist in S3, the most recent is used to determine whether 
+the local file has changed.
 
 =item s3 rm <bucket>[/<path>] <file>
 
+Delete a file from S3.
 
 =item s3 info <bucket>[/<path>] <file>
 
+Display a file's S3 meta-data. An error is reported if the file doesn't
+exist in S3.
 
 =item s3 diff <bucket>[/<path>] <file>
 
+Compare the MD5 checksums of the local file and S3 file.  
+If there are several versions of the file in S3, the most recent is used
+(see B<s3 push> for details).
+If the local or remote files don't exist or aren't readable an error is 
+reported and the exit status is 1. 
+If the files differ an error is reported and the exit status is 2.
+This command computes the local file checksum, and relies on the S3 checksum
+computed by Amazon when the file was saved in S3.
 
+=head1 BUGS
+
+Amazon S3 cannot store individual files of size greater than 5GB. 
+This program does not attempt to overcome that limitation.
 
 =head1 FILES
 
 ~/.pinerc    Per-user configuration file for S3 access keys
-    
 
 =cut
 
