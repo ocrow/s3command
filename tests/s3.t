@@ -23,7 +23,7 @@ sub find_item {
 sub read_file_list {
     # get the long format file listing line for file $item
     my ($bucket, $item) = @_;
-    my $cmd = "./s3 ll $bucket";
+    my $cmd = "./s3 ls -l $bucket";
     open LL, "$cmd |" or die "Couldn't read from S3 '$cmd'";
     my @result;
     while (my $line = <LL>) {
