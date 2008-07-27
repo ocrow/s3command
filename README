@@ -1,0 +1,9 @@
+
+-- S3 command --
+
+Command line interface to Amazon S3, written in perl
+
+Version: {VERSION}
+Author: Oliver Crow, ocrow@simplexity.net
+
+Do 'perldoc s3' to get the script documentation.
