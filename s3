@@ -24,6 +24,7 @@ sub usage_quit {
     print "   ls                            - list buckets\n";
     print "   ls   [-l] <bucket>[/<path>]   - list files\n";
     print "   find [-l] <bucket>[/<path>]   - list files recursively\n";
+    print "   du   [-h] <bucket>[/<path>]   - show disk usage\n";
     print "   get  <bucket>[/<path>] <file> - get file from S3\n";
     print "   put  <bucket>[/<path>] <file> - put file to S3\n";
     print "   push <bucket>[/<path>] <file> "
@@ -188,6 +189,51 @@ sub show_list {
         list_files();
     } else {
         list_buckets();
+    }
+}
+
+sub human_size {
+    # format a byte count in kilobytes, megabytes, etc.
+    my ($count) = @_;
+    my @suffixes = ('B', 'k', 'M', 'G', 'T', 'P');
+    while ($count >= 1024) {
+        $count /= 1024; 
+        shift @suffixes;
+    }
+    if ($count >= 10  || $suffixes[0] eq 'B') {
+        return sprintf "%d%s", $count, $suffixes[0];
+    } else {
+        return sprintf "%.1f%s", int($count * 10) / 10, $suffixes[0];
+    }
+}
+
+sub show_usage {
+    my %options;
+    getopts('h', \%options);
+
+    if (scalar(@ARGV) < 1) {
+        error("usage: $0 du [-h] <bucket>[/<path>]");
+    }
+
+    my ($bucket_name, $path) = argv_location();
+    my %params = (
+        'bucket' => $bucket_name,
+        'prefix' => $path,
+    );
+    my $response = $s3->list_bucket_all(\%params)
+        or s3_error();
+
+    exists $response->{bucket}
+        or error("No such bucket '$bucket_name'");
+
+    my $total = 0;
+    foreach my $key (@{$response->{keys}}) {
+        $total += $key->{size};
+    }
+    if (defined($options{'h'})) {
+        print human_size($total) . "\n";
+    } else {
+        print "$total\n";
     }
 }
 
@@ -391,6 +437,7 @@ sub remove_bucket {
 my %commands = (
     'ls'   => \&show_list,
     'find' => \&show_list,
+    'du'   => \&show_usage,
     'info' => \&file_info,
     'get'  => \&get_file,
     'put'  => \&put_file,
@@ -425,6 +472,7 @@ s3 - tool for manipulating files stored in Amazon S3
  s3 ls 
  s3 ls   [-l] <bucket>[/<path>]
  s3 find [-l] <bucket>[/<path>]
+ s3 du   [-h] <bucket>[/<path>]
  s3 get  <bucket>[/<path>] <file>
  s3 put  <bucket>[/<path>] <file>
  s3 push <bucket>[/<path>] <file>
@@ -498,6 +546,14 @@ directories if no path is given.
 
 Display list of all files beneath the specified path at any directory depth.
 This is similar to ls, except it descends all directories recursively.
+
+=item B<s3 du> [-h] <bucket>[/<path>]
+
+Show total number of bytes used by all files within the given bucket and path,
+at any directory depth. 
+If the -h option is given the total is formatted into a human readable format,
+using a one letter Byte, Kilobyte, Megabyte, Gigabyte, Terabyte or Petabyte 
+suffix. Each unit is 1024 times bigger than the last.
 
 =head2 Manipulating files
 
