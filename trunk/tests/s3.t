@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 
 use strict;
-use Test::More tests => 37;
+use Test::More tests => 39;
 use Data::UUID;
 use File::Copy;
 
@@ -123,6 +123,11 @@ ok ($list3[1] eq $list1[1], "Original date unchanged");
 my @list4 = read_file_list("$bucket/$path", "$test2_file");
 ok ($list4[0] == length($test2_data), "Modified size correct");
 ok ($list4[1] ne $list1[1], "Modified date changed");
+
+my $filesize = `./s3 du $bucket/$path`;
+my $expected_size = length($test_data) + length($test2_data);
+ok ($? == 0, "Get disk usage");
+ok ($filesize == $expected_size, "Expected disk usage");
 
 unlink $test_file;
 ok (! -e $test_file, "Delete original file locally");
