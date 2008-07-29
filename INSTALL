@@ -7,3 +7,11 @@ Version: {VERSION}
 Author: Oliver Crow, ocrow@simplexity.net
 
 Do 'perldoc s3' to get the script documentation.
+
+
+-- Release History --
+
+v0.9 - 7/28/2008
+- added du command
+
+v0.8 - 7/27/2008 original release
