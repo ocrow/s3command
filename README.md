@@ -1,6 +1,7 @@
 S3 command provides a command line tool set for interacting with Amazon Simple Storage Service. It is written in perl using the Net::Amazon::S3 module. I wrote it because I wanted clean, simple, reliable and easily maintained command line tool to access S3 and which would work well for managing backup files stored on S3.
 
 Version 0.9 was released on 7/28/2008.
+Project transfered from Google Code 3/12/2015.
 
 It supports:
 
@@ -15,6 +16,6 @@ The "push" sub-command is designed to be used in cron jobs and backup scripts. Y
 
 In some ways S3 command provides similar functionality to the s3cmd.rb script from the s3sync.rb ruby package and the s3cmd python package.
 
-Transfered from GoogleCode 3/12/2015
+
 
 -- Oliver Crow, ocrow@matriculus.com
