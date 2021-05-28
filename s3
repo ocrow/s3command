@@ -621,7 +621,7 @@ This program does not attempt to overcome that limitation.
 
 =head1 FILES
 
-~/.pinerc    Per-user configuration file for S3 access keys
+~/.s3rc    Per-user configuration file for S3 access keys
 
 =head1 AUTHOR
 
